@@ -24,6 +24,7 @@ func startHTTPServer(){
 	r.HandleFunc("/connect/{id}", httpConnectHandler)
 	r.HandleFunc("/disconnect/{id}", httpDisconnectHandler)
 	r.HandleFunc("/speakers", httpSpeakersHandler)
+	r.HandleFunc("/sources", httpSourcesHandler)
 	http.Handle("/", r)
 
 	srv := &http.Server{
@@ -100,6 +101,11 @@ func httpDefaultHandler(w http.ResponseWriter, r *http.Request) {
 
 func httpAirfoilsHandler(w http.ResponseWriter, r *http.Request) {
 	respond(w,200,"OK",client.Airfoils)
+}
+
+func httpSourcesHandler(w http.ResponseWriter, r *http.Request) {
+	ca.FetchSources()
+	respond(w,200,"OK", ca.Sources)
 }
 
 func httpSpeakersHandler(w http.ResponseWriter, r *http.Request) {

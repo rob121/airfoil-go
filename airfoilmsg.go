@@ -4,12 +4,46 @@ package airfoilgo
 /*
 Reference requests in json
 
+{"request":"setSpeakerVolume","requestID":"8","data":{"longIdentifier":"DC9B9CEFC55C@Kitchen","volume":0.46332660317420959}}
+
+{"request":"getSourceMetadata","requestID":"13","data":{"scaleFactor":2,"requestedData":{"album":true,"remoteControlAvailable":true,"machineIconAndScreenshot":64,"bundleid":true,"albumArt":64,"sourceName":true,"title":true,"icon":16,"trackMetadataAvailable":true,"artist":true,"machineModel":true,"machineName":true}}}
+
+{"request":"getSourceList","requestID":"14","data":{"iconSize":16,"scaleFactor":2}}
+
 //change audio source
 //{"request":"selectSource","requestID":"5","data":{"type":"recentApplications","identifier":"\/Applications\/Spotify.app"}}
 
 //connect to speaker
 //{"request":"connectToSpeaker","requestID":"5","data":{"longIdentifier":"843835649D9C@Seim's Lappi"}}
 
+
+
+//Event for metadata changed
+//45;{"request":"sourceMetadataChanged","data":{}}
+
+//fetch metadata
+
+{
+  "request": "getSourceMetadata",
+  "requestID": "7",
+  "data": {
+    "scaleFactor": 1,
+    "requestedData": {
+      "album": true,
+      "remoteControlAvailable": true,
+      "machineIconAndScreenshot": 64,
+      "bundleid": true,
+      "albumArt": 64,
+      "sourceName": true,
+      "title": true,
+      "icon": 16,
+      "trackMetadataAvailable": true,
+      "artist": true,
+      "machineModel": true,
+      "machineName": true
+    }
+  }
+}
 */
 type AirfoilResponse struct {
 	ReplyID string       `json:"replyID"`
@@ -35,6 +69,12 @@ type Speaker struct{
  Connected bool `json:"connected"`
 }
 
+type Source struct{
+	FriendlyName string `json:"friendlyName"`
+    Icon string `json:"icon"`
+	Identifier string `json:"identifier"`
+}
+
 type AirfoilRequest struct{
 	Request   string      `json:"request"`
 	RequestID string      `json:"requestID"`
@@ -45,5 +85,7 @@ type DataRequest struct {
 	Type string `json:"type"`
 	Identifier string `json:"identifier"`
 	LongIdentifier string `json:"longIdentifier"`
+	ScaleFactor int `json:"scaleFactor"`
+	IconSize  int `json:"iconSize"`
 }
 

@@ -28,6 +28,7 @@ type AirfoilConn struct{
   Conn net.Conn
   Cb func(AirfoilResponse,error)
   Speakers map[string]Speaker
+  Sources map[string]Source
 }
 
 func NewConn() (*AirfoilConn){
@@ -175,6 +176,8 @@ func (a *AirfoilConn) handleRequest() {
 		//dont pass up to client til handshake done
 		if(a.Status>2) {
 
+			log.Println("*****",s,"*******")
+
 			resp,err := a.parse(s)
 
 			a.intercept(resp,err)
@@ -262,6 +265,8 @@ func (a *AirfoilConn) intercept(resp AirfoilResponse,err error){
 
 	}
 
+
+
 }
 
 func (a *AirfoilConn) parse(resp string) (AirfoilResponse,error){
@@ -316,13 +321,28 @@ func (a *AirfoilConn) Connect(id string) (error){
 
 	return a.Send(string(outb))
 
+}
+
+func (a *AirfoilConn) FetchSources() (error){
+
+	req := AirfoilRequest{Request: "getSourceList", RequestID: "9", Data: DataRequest{IconSize: 16,ScaleFactor: 1}}
+
+	outb,err := json.Marshal(req)
+
+	if(err!=nil){
+
+		return err
+
+	}
+
+	return a.Send(string(outb))
 
 }
 
 
 func (a *AirfoilConn) Disconnect(id string) (error){
                         
-        req := AirfoilRequest{Request: "disconnectSpeaker", RequestID: "5", Data: DataRequest{LongIdentifier: id}}
+        req := AirfoilRequest{Request: "disconnectSpeaker", RequestID: "7", Data: DataRequest{LongIdentifier: id}}
                         
         outb,err := json.Marshal(req)
                         

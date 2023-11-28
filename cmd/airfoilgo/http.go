@@ -7,6 +7,7 @@ import (
 	client "github.com/rob121/airfoil-go"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -16,12 +17,15 @@ type JsonResp struct {
 	Message string      `json:"message"`
 }
 
-func startHTTPServer(){
+func startHTTPServer() {
 
-	r:= mux.NewRouter()
+	r := mux.NewRouter()
+	r.Use(Middleware)
 	r.HandleFunc("/", httpDefaultHandler)
 	r.HandleFunc("/airfoils", httpAirfoilsHandler)
 	r.HandleFunc("/connect/{id}", httpConnectHandler)
+	r.HandleFunc("/source/{id}", httpSourceHandler)
+	r.HandleFunc("/volume/{id}/{vol}", httpVolumeHandler)
 	r.HandleFunc("/disconnect/{id}", httpDisconnectHandler)
 	r.HandleFunc("/speakers", httpSpeakersHandler)
 	r.HandleFunc("/sources", httpSourcesHandler)
@@ -29,87 +33,177 @@ func startHTTPServer(){
 
 	srv := &http.Server{
 		Handler: r,
-		Addr:    fmt.Sprintf(":%s", http_port),
+		Addr:    fmt.Sprintf(":%s", conf.GetString("port")),
 		// Good practice: enforce timeouts for servers you create!
 		WriteTimeout: 15 * time.Second,
 		ReadTimeout:  15 * time.Second,
 	}
 
-	fmt.Println("Listening on port", http_port)
+	fmt.Println("Listening on port", conf.GetString("port"))
 	log.Fatal(srv.ListenAndServe())
 }
 
-func httpConnectHandler(w http.ResponseWriter, r *http.Request){
+func Middleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		if !ready_to_serve {
+			respond(w, 500, "Error", "Not Ready")
+			return
+		}
+
+		h.ServeHTTP(w, r)
+	})
+}
+
+func httpVolumeHandler(w http.ResponseWriter, r *http.Request) {
 
 	vars := mux.Vars(r)
 
 	id := vars["id"]
 
-	if(len(id)<1){
+	vol := vars["vol"]
 
-		respond(w,500,"Error","Invalid Id")
+	voli, _ := strconv.Atoi(vol)
+
+	if len(id) < 1 {
+
+		respond(w, 500, "Error", "Invalid Id")
 		return
 
 	}
 
-	for _,s := range ca.Speakers {
+	if len(vol) < 1 || voli > 100 || voli < 1 {
+		voli = 1
+	}
 
-		if(id==s.LongIdentifier) {
-			ca.Connect(id)
-			respond(w, 200, "OK", "")
+	spk, err := ca.GetSpeakder(id)
+
+	if err != nil {
+		respond(w, 500, "Error", err.Error())
+		return
+	}
+
+	volf := float64(voli) / 100
+
+	status := ca.Volume(spk.LongIdentifier, volf)
+
+	if status != nil {
+		respond(w, 500, "Error", status.Error())
+		return
+	}
+
+	respond(w, 200, "OK", "")
+
+}
+
+func httpConnectHandler(w http.ResponseWriter, r *http.Request) {
+
+	vars := mux.Vars(r)
+
+	id := vars["id"]
+
+	if len(id) < 1 {
+
+		respond(w, 500, "Error", "Invalid Id")
+		return
+
+	}
+
+	for _, s := range ca.Speakers {
+
+		if id == s.LongIdentifier {
+			resp := ca.Connect(id)
+
+			if resp == nil {
+				respond(w, 200, "OK", "")
+			} else {
+
+				respond(w, 500, fmt.Sprintf("ERR: %s", resp), "")
+			}
+
 			return
 		}
 
 	}
 
-	respond(w,500,"Error","Id Mismatch")
+	respond(w, 500, "Error", "Id Mismatch")
 	return
 
 }
 
-func httpDisconnectHandler(w http.ResponseWriter, r *http.Request){
-        
-        vars := mux.Vars(r)
+func httpSourceHandler(w http.ResponseWriter, r *http.Request) {
 
-        id := vars["id"]
+	vars := mux.Vars(r)
 
-        if(len(id)<1){
-        
-                respond(w,500,"Error","Invalid Id")   
-                return
-        
-        }
-        
-        for _,s := range ca.Speakers {
-        
-                if(id==s.LongIdentifier) {
-                        ca.Disconnect(id)
-                        respond(w, 200, "OK", "")
-                        return
-                }
-                
-        }
-         
-        respond(w,500,"Error","Id Mismatch")
-        return
-        
+	id := vars["id"]
+
+	if len(id) < 1 {
+
+		respond(w, 500, fmt.Sprintf("ERR:Id Not Found"), "")
+
+	}
+
+	resp := ca.SetSource(id)
+
+	respond(w, 200, "OK", resp)
+
+}
+
+func httpDisconnectHandler(w http.ResponseWriter, r *http.Request) {
+
+	vars := mux.Vars(r)
+
+	id := vars["id"]
+
+	if len(id) < 1 {
+
+		respond(w, 500, "Error", "Invalid Id")
+		return
+
+	}
+
+	for _, s := range ca.Speakers {
+
+		if id == s.LongIdentifier {
+			resp := ca.Disconnect(id)
+
+			if resp == nil {
+
+				respond(w, 200, "OK", "")
+
+			} else {
+
+				respond(w, 500, fmt.Sprintf("ERR: %s", resp), "")
+			}
+			return
+		}
+
+	}
+
+	respond(w, 500, "Error", "Id Mismatch")
+	return
+
 }
 
 func httpDefaultHandler(w http.ResponseWriter, r *http.Request) {
-	respond(w,200,"OK","")
+	respond(w, 200, "OK", ca)
 }
 
 func httpAirfoilsHandler(w http.ResponseWriter, r *http.Request) {
-	respond(w,200,"OK",client.Airfoils)
+	respond(w, 200, "OK", client.Airfoils)
 }
 
 func httpSourcesHandler(w http.ResponseWriter, r *http.Request) {
+
 	ca.FetchSources()
-	respond(w,200,"OK", ca.Sources)
+	respond(w, 200, "OK", ca.Sources)
+
 }
 
 func httpSpeakersHandler(w http.ResponseWriter, r *http.Request) {
-	respond(w,200,"OK", ca.Speakers)
+
+	respond(w, 200, "OK", ca.Speakers)
+
 }
 
 func respond(w http.ResponseWriter, code int, message string, payload interface{}) {

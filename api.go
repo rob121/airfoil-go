@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,11 +34,13 @@ var readlen = 1024
 var Airfoils []string
 
 type AirfoilConn struct {
-	Status   int
-	Conn     net.Conn
-	Cb       func(AirfoilResponse, error)
-	Speakers map[string]Speaker
-	Sources  map[string]Source
+	Status      int
+	Conn        net.Conn
+	Cb          func(AirfoilResponse, error)
+	Speakers    map[string]Speaker
+	Sources     map[string]Source
+	SpeakerLock sync.RWMutex
+	SourceLock  sync.RWMutex
 }
 
 func NewConn() *AirfoilConn {
@@ -236,19 +239,22 @@ func (a *AirfoilConn) handleRequest() {
 func (a *AirfoilConn) intercept(response AirfoilResponse, err error) {
 
 	if response.Request == "speakerListChanged" {
-
+		a.SpeakerLock.RLock()
 		for _, sp := range response.Data.Speakers {
 			//updating speaker struct
 			a.SetSpeaker(&sp)
 		}
+		a.SpeakerLock.Unlock()
 
 	}
 	//handle sources
 	if response.ReplyID == "9" {
 
+		a.SourceLock.Lock()
 		for _, sc := range response.Data.Sources {
 			a.Sources[sc.Identifier] = sc
 		}
+		a.SourceLock.Unlock()
 
 	}
 
@@ -370,8 +376,9 @@ func (a *AirfoilConn) Volume(id string, vol float64) error {
 
 func (a *AirfoilConn) SetSpeaker(spkr *Speaker) error {
 
+	a.SpeakerLock.Lock()
 	a.Speakers[spkr.LongIdentifier] = *spkr
-
+	a.SpeakerLock.Unlock()
 	return nil
 
 }
@@ -379,15 +386,16 @@ func (a *AirfoilConn) SetSpeaker(spkr *Speaker) error {
 func (a *AirfoilConn) GetSpeakder(id string) (*Speaker, error) {
 
 	var sd *Speaker
-
+	a.SpeakerLock.RLock()
 	for _, s := range a.Speakers {
 
 		if id == s.LongIdentifier {
-
+			a.SpeakerLock.RUnlock()
 			return &s, nil
 		}
 
 	}
+	a.SpeakerLock.RUnlock()
 
 	return sd, errors.New("NOT_FOUND")
 
@@ -396,15 +404,16 @@ func (a *AirfoilConn) GetSpeakder(id string) (*Speaker, error) {
 func (a *AirfoilConn) GetSource(id string) (*Source, error) {
 
 	var sd *Source
-
+	a.SourceLock.RLock()
 	for _, s := range a.Sources {
 
 		if id == s.Identifier {
-
+			a.SourceLock.RUnlock()
 			return &s, nil
 		}
 
 	}
+	a.SourceLock.RUnlock()
 
 	return sd, errors.New("NOT_FOUND")
 

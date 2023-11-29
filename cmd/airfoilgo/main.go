@@ -17,6 +17,7 @@ var conf *viper.Viper
 var cerr error
 var ca *client.AirfoilConn
 var ready_to_serve bool = false
+var mc mqtt.Client
 
 func main() {
 
@@ -32,7 +33,7 @@ func main() {
 
 	go startHTTPServer()
 
-	mc := mqttClient()
+	mc = mqttClient()
 
 	_, err := client.Scan()
 
@@ -66,12 +67,13 @@ func main() {
 	}
 
 	go watchConn(addr)
+	go syncSpeakers()
 
 	ca.Reader(func(response client.AirfoilResponse, err error) {
 
 		if err != nil {
 
-			fmt.Println(err)
+			fmt.Printf("Client Error %s\n", err.Error())
 			return
 		}
 
@@ -85,11 +87,13 @@ func main() {
 		}
 
 		if response.ReplyID == "3" {
+
 			for _, spk := range response.Data.Speakers {
 
 				publishMediaPlayer(spk, mc)
 
 			}
+
 		}
 
 	})
@@ -120,6 +124,9 @@ func publishPlayerState(spk *client.Speaker, mc mqtt.Client) {
 	state_topic := fmt.Sprintf("home/speakers/airfoil/%s", cleanSpeakerName(spk.LongIdentifier))
 
 	out := make(map[string]interface{})
+
+	out["id"] = spk.LongIdentifier
+	out["friendly_name"] = spk.Name
 
 	if spk.Connected {
 		out["connected"] = "yes"
@@ -158,6 +165,8 @@ func publishMediaPlayer(spk client.Speaker, mc mqtt.Client) {
 	out["state_off"] = "OFF"
 	out["qos"] = 0
 	out["retain"] = true
+
+	go publishPlayerState(&spk, mc)
 
 	out2, _ := json.Marshal(out)
 
@@ -222,4 +231,23 @@ func watchConn(addr string) {
 			return
 		}
 	}
+}
+
+func syncSpeakers() {
+
+	tick := time.NewTicker(time.Second * 10)
+
+	for range tick.C {
+
+		ca.SpeakerLock.RLock()
+		for _, spk := range ca.Speakers {
+
+			publishMediaPlayer(spk, mc)
+			publishPlayerState(&spk, mc)
+
+		}
+		ca.SpeakerLock.RUnlock()
+
+	}
+
 }

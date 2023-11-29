@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -24,6 +25,7 @@ func startHTTPServer() {
 	r.HandleFunc("/", httpDefaultHandler)
 	r.HandleFunc("/airfoils", httpAirfoilsHandler)
 	r.HandleFunc("/connect/{id}", httpConnectHandler)
+	r.HandleFunc("/toggleconn/{id}", httpToggleconnHandler)
 	r.HandleFunc("/source/{id}", httpSourceHandler)
 	r.HandleFunc("/volume/{id}/{vol}", httpVolumeHandler)
 	r.HandleFunc("/disconnect/{id}", httpDisconnectHandler)
@@ -63,7 +65,16 @@ func httpVolumeHandler(w http.ResponseWriter, r *http.Request) {
 
 	vol := vars["vol"]
 
+	if strings.Contains(vol, ".") {
+
+		parts := strings.Split(vol, ".")
+		vol = parts[0]
+
+	}
+
 	voli, _ := strconv.Atoi(vol)
+
+	log.Printf("Got Volume %s for %s", vol, id)
 
 	if len(id) < 1 {
 
@@ -121,6 +132,51 @@ func httpConnectHandler(w http.ResponseWriter, r *http.Request) {
 				respond(w, 500, fmt.Sprintf("ERR: %s", resp), "")
 			}
 
+			return
+		}
+
+	}
+
+	respond(w, 500, "Error", "Id Mismatch")
+	return
+
+}
+
+func httpToggleconnHandler(w http.ResponseWriter, r *http.Request) {
+
+	vars := mux.Vars(r)
+
+	id := vars["id"]
+
+	if len(id) < 1 {
+
+		respond(w, 500, "Error", "Invalid Id")
+		return
+
+	}
+
+	spk, err := ca.GetSpeakder(id)
+
+	var resp error
+
+	if err == nil {
+
+		if spk.Connected == true {
+
+			resp = ca.Disconnect(id)
+
+		} else {
+
+			resp = ca.Connect(id)
+
+		}
+
+		if resp == nil {
+			respond(w, 200, "OK", "")
+			return
+		} else {
+
+			respond(w, 500, fmt.Sprintf("ERR: %s", resp), "")
 			return
 		}
 

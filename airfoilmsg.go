@@ -18,6 +18,8 @@ Reference requests in json
 //Event for metadata changed
 //45;{"request":"sourceMetadataChanged","data":{}}
 
+	subscribe := `{"request":"subscribe","requestID":"3","data":{"notifications":["remoteControlChangedRequest","speakerConnectedChanged","speakerListChanged","speakerNameChanged","speakerPasswordChanged","speakerVolumeChanged"]}}`
+
 //fetch metadata
 
 	{
@@ -87,10 +89,10 @@ type AirfoilRequest struct {
 }
 
 type DataRequest struct {
-	Type           string  `json:"type"`
-	Identifier     string  `json:"identifier"`
-	LongIdentifier string  `json:"longIdentifier"`
-	ScaleFactor    int     `json:"scaleFactor"`
-	IconSize       int     `json:"iconSize"`
-	Volume         float64 `json:"volume"`
+	Type           string  `json:"type,omitempty"`
+	Identifier     string  `json:"identifier,omitempty"`
+	LongIdentifier string  `json:"longIdentifier,omitempty"`
+	ScaleFactor    int     `json:"scaleFactor,omitempty"`
+	IconSize       int     `json:"iconSize,omitempty"`
+	Volume         float64 `json:"volume,omitempty"`
 }

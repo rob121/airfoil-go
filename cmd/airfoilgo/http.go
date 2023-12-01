@@ -53,6 +53,11 @@ func Middleware(h http.Handler) http.Handler {
 			return
 		}
 
+		if ca.Status < 2 {
+			respond(w, 500, "Error", "Connection Not Ready")
+			return
+		}
+
 		h.ServeHTTP(w, r)
 	})
 }
@@ -87,7 +92,9 @@ func httpVolumeHandler(w http.ResponseWriter, r *http.Request) {
 		voli = 1
 	}
 
-	spk, err := ca.GetSpeakder(id)
+	log.Printf("Getting Speaker %s", id)
+	spk, err := ca.GetSpeaker(id)
+	log.Printf("Got Speaker %s", id)
 
 	if err != nil {
 		respond(w, 500, "Error", err.Error())
@@ -155,7 +162,7 @@ func httpToggleconnHandler(w http.ResponseWriter, r *http.Request) {
 
 	}
 
-	spk, err := ca.GetSpeakder(id)
+	spk, err := ca.GetSpeaker(id)
 
 	var resp error
 

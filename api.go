@@ -21,34 +21,31 @@ const OK_REGEXP = "^OK\n$"
 
 //unimplemented requests
 
-/*
-
-{"request":"getSourceMetadata","requestID":"9","data":{"scaleFactor":1,"requestedData":{"album":true,"remoteControlAvailable":true,"machineIconAndScreenshot":64,"bundleid":true,"albumArt":64,"sourceName":true,"title":true,"icon":16,"trackMetadataAvailable":true,"artist":true,"machineModel":true,"machineName":true}}}
-//{"request":"setSpeakerVolume","requestID":"10","data":{"longIdentifier":"542A1B639776@Office","volume":0.60000002384185791}}"
-
-*/
-
 var versioncheck *regexp.Regexp
 var okcheck *regexp.Regexp
 var readlen = 1024
+var maxbuffer = 16384
 var Airfoils []string
 
 type AirfoilConn struct {
 	Status      int
+	Address     string
 	Conn        net.Conn
 	Cb          func(AirfoilResponse, error)
 	Speakers    map[string]Speaker
 	Sources     map[string]Source
 	SpeakerLock sync.RWMutex
 	SourceLock  sync.RWMutex
+	Errors      []error
 }
 
-func NewConn() *AirfoilConn {
+func NewConn(addr string) *AirfoilConn {
 	versioncheck, _ = regexp.Compile(PROTOCOL_REGEXP)
 	okcheck, _ = regexp.Compile(OK_REGEXP)
 	conn := &AirfoilConn{}
 	conn.Speakers = make(map[string]Speaker)
 	conn.Sources = make(map[string]Source)
+	conn.Address = addr
 	return conn
 }
 
@@ -57,6 +54,8 @@ func Scan() ([]string, error) {
 	resolver, err := zeroconf.NewResolver(nil)
 
 	var s []string
+
+	Airfoils = nil
 
 	if err != nil {
 		return s, err
@@ -106,9 +105,10 @@ func (a *AirfoilConn) Send(msg string) error {
 
 func (a *AirfoilConn) send(msg string) error {
 
+	a.Conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 	ml := len(msg)
 	payload := fmt.Sprintf("%d;%s", ml, msg)
-	// log.Printf("Sent:%s\n",payload)
+	log.Printf("Sending Request:%s\n", payload)
 	_, werr := a.Conn.Write([]byte(payload))
 	if werr != nil {
 		return werr
@@ -117,12 +117,63 @@ func (a *AirfoilConn) send(msg string) error {
 	return nil
 }
 
-func (a *AirfoilConn) Dial(addr string) error {
+func (a *AirfoilConn) Close() error {
+
+	if a.Conn != nil {
+		//close if an existing connection
+
+		return a.Conn.Close()
+
+	}
+
+	return nil
+
+}
+
+func (a *AirfoilConn) KeepAlive() {
+
+	tick := time.NewTicker(time.Second * 10)
+
+	for range tick.C {
+
+		stat := a.Ping()
+
+		if stat != nil {
+
+			res, _ := Scan()
+
+			if len(res) > 0 {
+				a.Address = res[0]
+			}
+
+			a.Status = 0 //reset and redial!
+
+			a.Dial()
+		}
+
+	}
+
+}
+
+func (a *AirfoilConn) Ping() error {
+
+	d := net.Dialer{Timeout: time.Second * 5}
+	_, err := d.Dial("tcp", a.Address)
+
+	return err
+
+}
+
+func (a *AirfoilConn) Dial() error {
 
 	var err error
 
 	a.Status = 1
-	a.Conn, err = net.Dial("tcp", addr)
+
+	a.Close() //close existing
+
+	d := net.Dialer{Timeout: time.Second * 5}
+	a.Conn, err = d.Dial("tcp", a.Address)
 
 	if err != nil {
 
@@ -139,12 +190,14 @@ func (a *AirfoilConn) handleRequest() {
 	// Buffer that holds incoming information
 	buf := make([]byte, readlen)
 
+	re := regexp.MustCompile("[0-9]+;")
+
 	for {
 		rlen, err := a.Conn.Read(buf)
 
 		if err != nil {
-			fmt.Println("Error reading:", err.Error())
-			break
+			fmt.Println("Read Error:", err.Error())
+			return //close it down
 		}
 
 		s := string(buf[:rlen])
@@ -169,8 +222,8 @@ func (a *AirfoilConn) handleRequest() {
 						len2, err2 := a.Conn.Read(buf2)
 
 						if err2 != nil {
-							fmt.Println("Error reading:", err2.Error())
-							break
+							fmt.Println("Read Error:", err2.Error())
+							return //close it down
 						}
 
 						consumelen = consumelen - len2
@@ -184,18 +237,31 @@ func (a *AirfoilConn) handleRequest() {
 
 		}
 
-		//log.Printf("Raw String Response: %s\n", s)
+		log.Printf("Raw String Response: %s\n", s)
 
 		//dont pass up to client til handshake done
 		if a.Status > 2 {
 
-			resp, err := a.parse(s)
+			//we may have gotten multiple segments in one string, so break it up
 
-			a.intercept(resp, err)
+			split := re.Split(s, -1)
 
-			//log.Println("Intercepted: *****", fmt.Sprintf("%+v", resp), " - ", fmt.Sprintf("%+v", err), " *******")
+			for i := range split {
 
-			a.Cb(resp, err)
+				if len(split[i]) > 0 {
+					//because we are handling json with a leading bit of data and we have to split on it to detect, lets put something back
+
+					go func(sp string) {
+						resp, serr := a.parse(fmt.Sprintf("%d;%s", len(sp), sp))
+
+						a.intercept(resp, serr)
+
+						a.Cb(resp, serr)
+					}(split[i])
+				}
+
+			}
+
 		}
 
 		if a.Status < 2 && versioncheck.MatchString(s) {
@@ -238,13 +304,12 @@ func (a *AirfoilConn) handleRequest() {
 // handle syncing states  to the speaker struct
 func (a *AirfoilConn) intercept(response AirfoilResponse, err error) {
 
-	if response.Request == "speakerListChanged" {
-		a.SpeakerLock.RLock()
+	if response.Request == "speakerListChanged" || response.ReplyID == "3" {
+
 		for _, sp := range response.Data.Speakers {
 			//updating speaker struct
 			a.SetSpeaker(&sp)
 		}
-		a.SpeakerLock.Unlock()
 
 	}
 	//handle sources
@@ -260,7 +325,7 @@ func (a *AirfoilConn) intercept(response AirfoilResponse, err error) {
 
 	if response.Request == "speakerConnectedChanged" {
 
-		spk, err := a.GetSpeakder(response.Data.LongIdentifier)
+		spk, err := a.GetSpeaker(response.Data.LongIdentifier)
 
 		if err == nil {
 			spk.Connected = response.Data.Connected
@@ -271,7 +336,7 @@ func (a *AirfoilConn) intercept(response AirfoilResponse, err error) {
 
 	if response.Request == "speakerVolumeChanged" {
 
-		spk, err := a.GetSpeakder(response.Data.LongIdentifier)
+		spk, err := a.GetSpeaker(response.Data.LongIdentifier)
 
 		if err == nil {
 			spk.Volume = response.Data.Volume
@@ -282,9 +347,17 @@ func (a *AirfoilConn) intercept(response AirfoilResponse, err error) {
 
 }
 
+func (a *AirfoilConn) Subscribe() error {
+
+	a.Status = 3
+	subscribe := `{"request":"subscribe","requestID":"3","data":{"notifications":["remoteControlChangedRequest","speakerConnectedChanged","speakerListChanged","speakerNameChanged","speakerPasswordChanged","speakerVolumeChanged"]}}`
+	return a.Send(subscribe)
+
+}
+
 func (a *AirfoilConn) parse(resp string) (AirfoilResponse, error) {
 
-	//log.Printf("Raw Parse: %s\n", resp)
+	log.Printf("String to Parse: %s\n", resp)
 
 	parts := strings.Split(resp, ";")
 
@@ -383,19 +456,19 @@ func (a *AirfoilConn) SetSpeaker(spkr *Speaker) error {
 
 }
 
-func (a *AirfoilConn) GetSpeakder(id string) (*Speaker, error) {
+func (a *AirfoilConn) GetSpeaker(id string) (*Speaker, error) {
 
 	var sd *Speaker
 	a.SpeakerLock.RLock()
+	defer a.SpeakerLock.RUnlock()
 	for _, s := range a.Speakers {
 
 		if id == s.LongIdentifier {
-			a.SpeakerLock.RUnlock()
+
 			return &s, nil
 		}
 
 	}
-	a.SpeakerLock.RUnlock()
 
 	return sd, errors.New("NOT_FOUND")
 
@@ -405,15 +478,15 @@ func (a *AirfoilConn) GetSource(id string) (*Source, error) {
 
 	var sd *Source
 	a.SourceLock.RLock()
+	defer a.SourceLock.RUnlock()
 	for _, s := range a.Sources {
 
 		if id == s.Identifier {
-			a.SourceLock.RUnlock()
+
 			return &s, nil
 		}
 
 	}
-	a.SourceLock.RUnlock()
 
 	return sd, errors.New("NOT_FOUND")
 

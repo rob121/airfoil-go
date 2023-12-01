@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	client "github.com/rob121/airfoil-go"
@@ -18,10 +20,16 @@ var cerr error
 var ca *client.AirfoilConn
 var ready_to_serve bool = false
 var mc mqtt.Client
+var debug bool = false
 
 func main() {
 
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	fmt.Println("Starting Server...looking for Airfoil Install")
+
+	flag.BoolVar(&debug, "debug", false, "Debug Flag bool")
+	flag.Parse()
 
 	vhelp.Load("config")
 	conf, cerr = vhelp.Get("config")
@@ -38,48 +46,49 @@ func main() {
 	_, err := client.Scan()
 
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 	}
 
 	if len(client.Airfoils) < 1 {
 
-		fmt.Println("No Airfoil Installs Found, check your network settings")
+		log.Println("No Airfoil Installs Found, check your network settings")
+		os.Exit(1)
+		return
+	}
+
+	//take the first one, this needs some more thinking
+	addr := client.Airfoils[0]
+
+	fmt.Printf("Found Airfoil at %s\n", addr)
+
+	ca = client.NewConn(addr)
+
+	derr := ca.Dial()
+
+	if derr != nil {
+
+		log.Println(derr)
 		os.Exit(1)
 		return
 	}
 
 	ready_to_serve = true
 
-	//take the first one, this needs some more thinking
-	addr := client.Airfoils[0]
-
-	fmt.Printf("Found airfoil at %s\n", addr)
-
-	ca = client.NewConn()
-
-	derr := ca.Dial(addr)
-
-	if derr != nil {
-
-		fmt.Println(derr)
-		os.Exit(1)
-		return
-	}
-
-	go watchConn(addr)
+	go ca.KeepAlive()
+	go watchConn()
 	go syncSpeakers()
 
 	ca.Reader(func(response client.AirfoilResponse, err error) {
 
 		if err != nil {
 
-			fmt.Printf("Client Error %s\n", err.Error())
+			log.Printf("Client Error %s\n", err.Error())
 			return
 		}
 
 		if response.Request == "speakerVolumeChanged" || response.Request == "speakerConnectedChanged" {
 
-			spk, err := ca.GetSpeakder(response.Data.LongIdentifier)
+			spk, err := ca.GetSpeaker(response.Data.LongIdentifier)
 			if err == nil {
 				publishPlayerState(spk, mc)
 			}
@@ -117,9 +126,42 @@ func cleanSpeakerName(spk string) string {
 
 }
 
+func publishSources() {
+
+	if debug {
+		fmt.Println("MQTT Publish Sources State")
+	}
+
+	state_topic := fmt.Sprintf("home/speakers/airfoil/sources")
+
+	var out []client.Source
+
+	for _, src := range ca.Sources {
+
+		src.Icon = "" //too much data
+
+		out = append(out, src)
+	}
+
+	out2, _ := json.Marshal(out)
+
+	pout, _ := prettyString(string(out2))
+	if debug {
+		fmt.Println("Sending to topic", state_topic)
+		fmt.Println(pout)
+	}
+
+	if len(out) > 0 {
+		mc.Publish(state_topic, 0, false, string(out2))
+	}
+
+}
+
 func publishPlayerState(spk *client.Speaker, mc mqtt.Client) {
 
-	fmt.Println("MQTT Publish Player State")
+	if debug {
+		fmt.Println("MQTT Publish Player State")
+	}
 
 	state_topic := fmt.Sprintf("home/speakers/airfoil/%s", cleanSpeakerName(spk.LongIdentifier))
 
@@ -129,52 +171,109 @@ func publishPlayerState(spk *client.Speaker, mc mqtt.Client) {
 	out["friendly_name"] = spk.Name
 
 	if spk.Connected {
-		out["connected"] = "yes"
+		out["connected"] = "on"
 	} else {
-		out["connected"] = "no"
+		out["connected"] = "off"
 	}
-	out["volume_level"] = fmt.Sprint(spk.Volume)
+	out["volume_level"] = spk.Volume
 
 	out2, _ := json.Marshal(out)
 
-	fmt.Println("Sending to topic", state_topic, string(out2))
-
-	tok := mc.Publish(state_topic, 0, false, string(out2))
-
-	fmt.Println(tok)
+	pout, _ := prettyString(string(out2))
+	if debug {
+		fmt.Println("Sending to topic", state_topic)
+		fmt.Println(pout)
+	}
+	mc.Publish(state_topic, 0, false, string(out2))
 
 }
 
 func publishMediaPlayer(spk client.Speaker, mc mqtt.Client) {
 
-	fmt.Println("MQTT Publish Config")
+	if debug {
+		fmt.Println("MQTT Publish Config")
+	}
 
-	topic := fmt.Sprintf("homeassistant/sensor/airfoil_%s/config", cleanSpeakerName(spk.LongIdentifier))
+	//shared state topic with json
 
 	state_topic := fmt.Sprintf("home/speakers/airfoil/%s", cleanSpeakerName(spk.LongIdentifier))
 
+	//publish config for each sensor
+
+	topic := fmt.Sprintf("homeassistant/sensor/airfoil_%s_connected/config", cleanSpeakerName(spk.LongIdentifier))
+
 	out := make(map[string]interface{})
 
-	out["name"] = fmt.Sprintf("airfoil_%s", cleanSpeakerName(spk.LongIdentifier))
-	out["unique_id"] = fmt.Sprintf("airfoil_%s", cleanSpeakerName(spk.LongIdentifier))
-	out["friendly_name"] = fmt.Sprintf(spk.Name)
+	out["name"] = fmt.Sprintf("airfoil_%s_connected", cleanSpeakerName(spk.LongIdentifier))
+	out["unique_id"] = fmt.Sprintf("airfoil_%s_connected", cleanSpeakerName(spk.LongIdentifier))
+	out["friendly_name"] = fmt.Sprintf("%s Connected", spk.Name)
 	out["state_topic"] = state_topic
-	out["payload_on"] = "ON"
-	out["payload_off"] = "OFF"
-	out["state_on"] = "ON"
-	out["state_off"] = "OFF"
+	out["value_template"] = "{{ value_json.connected }}"
 	out["qos"] = 0
-	out["retain"] = true
+	out["retain"] = false
+
+	outs, _ := json.Marshal(out)
+
+	if debug {
+		fmt.Println("Sending to topic", topic)
+		pout, _ := prettyString(string(outs))
+		fmt.Println(pout)
+	}
+
+	mc.Publish(topic, 0, false, string(outs))
+
+	//config for volume
+
+	topic2 := fmt.Sprintf("homeassistant/sensor/airfoil_%s_volume/config", cleanSpeakerName(spk.LongIdentifier))
+
+	out2 := make(map[string]interface{})
+
+	out2["name"] = fmt.Sprintf("airfoil_%s_volume", cleanSpeakerName(spk.LongIdentifier))
+	out2["unique_id"] = fmt.Sprintf("airfoil_%s_volume", cleanSpeakerName(spk.LongIdentifier))
+	out2["friendly_name"] = fmt.Sprintf("%s Volume", spk.Name)
+	out2["state_topic"] = state_topic
+	out2["value_template"] = "{{ value_json.volume_level }}"
+	out2["qos"] = 0
+	out2["retain"] = false
+
+	out2j, _ := json.Marshal(out2)
+
+	mc.Publish(topic2, 0, false, string(out2j))
+
+	topic3 := fmt.Sprintf("homeassistant/sensor/airfoil_%s_id/config", cleanSpeakerName(spk.LongIdentifier))
+
+	out3 := make(map[string]interface{})
+
+	out3["name"] = fmt.Sprintf("airfoil_%s_id", cleanSpeakerName(spk.LongIdentifier))
+	out3["unique_id"] = fmt.Sprintf("airfoil_%s_id", cleanSpeakerName(spk.LongIdentifier))
+	out3["friendly_name"] = fmt.Sprintf("%s ID", spk.Name)
+	out3["state_topic"] = state_topic
+	out3["value_template"] = "{{ value_json.id }}"
+	out3["qos"] = 0
+	out3["retain"] = false
+
+	out3s, _ := json.Marshal(out3)
+
+	mc.Publish(topic3, 0, false, string(out3s))
+
+	topic4 := fmt.Sprintf("homeassistant/sensor/airfoil_sources/config")
+
+	out4 := make(map[string]interface{})
+
+	out4["name"] = fmt.Sprintf("airfoil_sources")
+	out4["unique_id"] = fmt.Sprintf("airfoil_sources")
+	out4["friendly_name"] = fmt.Sprintf("Airfoil Sources")
+	out4["state_topic"] = fmt.Sprintf("home/speakers/airfoil/sources")
+	out4["qos"] = 0
+	out4["value_template"] = "{{ value_json }}"
+	out4["retain"] = false
+
+	out4s, _ := json.Marshal(out4)
+
+	mc.Publish(topic4, 0, false, string(out4s))
 
 	go publishPlayerState(&spk, mc)
-
-	out2, _ := json.Marshal(out)
-
-	fmt.Println("Sending to topic", topic, string(out2))
-
-	tok := mc.Publish(topic, 0, false, string(out2))
-
-	fmt.Println(tok)
+	go publishSources()
 
 }
 
@@ -183,11 +282,11 @@ var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Me
 }
 
 var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
-	fmt.Println("Connected")
+	fmt.Println("MQTT: Connected")
 }
 
 var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err error) {
-	fmt.Printf("Connect lost: %v", err)
+	fmt.Printf("MQTT: Connect Lost: %v", err)
 }
 
 func mqttClient() mqtt.Client {
@@ -212,30 +311,36 @@ func mqttClient() mqtt.Client {
 
 }
 
-// keep the connection alive
-func watchConn(addr string) {
-
-	tick := time.NewTicker(time.Second * 300)
-
-	ca.FetchSources()
-
-	for range tick.C {
-
-		derr := ca.Dial(addr)
-
-		if derr != nil {
-
-			ca.FetchSources() //reload sources occasionally
-
-			log.Println(derr)
-			return
-		}
+func prettyString(str string) (string, error) {
+	var prettyJSON bytes.Buffer
+	if err := json.Indent(&prettyJSON, []byte(str), "", "    "); err != nil {
+		return "", err
 	}
+	return prettyJSON.String(), nil
+}
+
+// keep the connection alive
+func watchConn() {
+
+	go func() {
+		for {
+			stat := ca.FetchSources() //reload sources occasionally
+
+			if stat != nil {
+				log.Printf("Fetch Status %s\n", stat)
+				time.Sleep(time.Second * 2)
+				continue
+			}
+			return
+
+		}
+	}()
+
 }
 
 func syncSpeakers() {
 
-	tick := time.NewTicker(time.Second * 10)
+	tick := time.NewTicker(time.Second * 30)
 
 	for range tick.C {
 
@@ -244,6 +349,7 @@ func syncSpeakers() {
 
 			publishMediaPlayer(spk, mc)
 			publishPlayerState(&spk, mc)
+			publishSources()
 
 		}
 		ca.SpeakerLock.RUnlock()

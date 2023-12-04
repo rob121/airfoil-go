@@ -22,6 +22,8 @@ var ready_to_serve bool = false
 var mc mqtt.Client
 var debug bool = false
 
+//sample implementation to send states to MQTT on Home assistant
+
 func main() {
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -75,8 +77,10 @@ func main() {
 	ready_to_serve = true
 
 	go ca.KeepAlive()
-	go watchConn()
+	go fetchSources()
 	go syncSpeakers()
+
+	//handle messages back from airfoil and do custom actions
 
 	ca.Reader(func(response client.AirfoilResponse, err error) {
 
@@ -320,7 +324,7 @@ func prettyString(str string) (string, error) {
 }
 
 // keep the connection alive
-func watchConn() {
+func fetchSources() {
 
 	go func() {
 		for {

@@ -77,7 +77,7 @@ func main() {
 	ready_to_serve = true
 
 	go ca.KeepAlive()
-	go fetchSources()
+	go fetchData()
 	go syncSpeakers()
 
 	//handle messages back from airfoil and do custom actions
@@ -96,6 +96,12 @@ func main() {
 			if err == nil {
 				publishPlayerState(spk, mc)
 			}
+
+		}
+
+		if response.ReplyID == "13" {
+
+			publishSources()
 
 		}
 
@@ -150,6 +156,7 @@ func publishSources() {
 	out2, _ := json.Marshal(out)
 
 	pout, _ := prettyString(string(out2))
+
 	if debug {
 		fmt.Println("Sending to topic", state_topic)
 		fmt.Println(pout)
@@ -158,6 +165,10 @@ func publishSources() {
 	if len(out) > 0 {
 		mc.Publish(state_topic, 0, false, string(out2))
 	}
+
+	topic2 := fmt.Sprintf("home/speakers/airfoil/source")
+
+	mc.Publish(topic2, 0, false, ca.ActiveSourceKey)
 
 }
 
@@ -276,6 +287,21 @@ func publishMediaPlayer(spk client.Speaker, mc mqtt.Client) {
 
 	mc.Publish(topic4, 0, false, string(out4s))
 
+	topic5 := fmt.Sprintf("homeassistant/sensor/airfoil_source/config")
+
+	out5 := make(map[string]interface{})
+
+	out5["name"] = fmt.Sprintf("airfoil_source")
+	out5["unique_id"] = fmt.Sprintf("airfoil_source")
+	out5["friendly_name"] = fmt.Sprintf("Airfoil Source")
+	out5["state_topic"] = fmt.Sprintf("home/speakers/airfoil/source")
+	out5["qos"] = 0
+	out5["retain"] = false
+
+	out5s, _ := json.Marshal(out5)
+
+	mc.Publish(topic5, 0, false, string(out5s))
+
 	go publishPlayerState(&spk, mc)
 	go publishSources()
 
@@ -324,7 +350,7 @@ func prettyString(str string) (string, error) {
 }
 
 // keep the connection alive
-func fetchSources() {
+func fetchData() {
 
 	go func() {
 		for {
@@ -339,6 +365,15 @@ func fetchSources() {
 
 		}
 	}()
+
+	tm := time.NewTicker(time.Second * 30)
+
+	for range tm.C {
+
+		ca.FetchMetadata()
+		ca.FetchSources()
+
+	}
 
 }
 

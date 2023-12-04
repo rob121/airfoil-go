@@ -51,14 +51,15 @@ type AirfoilResponse struct {
 }
 
 type DataResponse struct {
-	Speakers         []Speaker `json:"speakers"`
-	Sources          []Source  `json:"sources,omitempty"`
-	CanRemoteControl bool      `json:"canRemoteControl"`
-	CanConnect       bool      `json:"canConnect"`
-	Notifications    []string  `json:"notifications"`
-	LongIdentifier   string    `json:"longIdentifier"`
-	Connected        bool      `json:"connected,omitempty"`
-	Volume           float64   `json:"volume,omitempty"`
+	Speakers         []Speaker     `json:"speakers"`
+	Sources          []Source      `json:"sources,omitempty"`
+	CanRemoteControl bool          `json:"canRemoteControl"`
+	CanConnect       bool          `json:"canConnect"`
+	Notifications    []string      `json:"notifications"`
+	LongIdentifier   string        `json:"longIdentifier"`
+	Connected        bool          `json:"connected,omitempty"`
+	Volume           float64       `json:"volume,omitempty"`
+	Metadata         RequestedData `json:"metadata,omitempty"`
 }
 
 type Speaker struct {
@@ -89,10 +90,26 @@ type AirfoilRequest struct {
 }
 
 type DataRequest struct {
-	Type           string  `json:"type,omitempty"`
-	Identifier     string  `json:"identifier,omitempty"`
-	LongIdentifier string  `json:"longIdentifier,omitempty"`
-	ScaleFactor    int     `json:"scaleFactor,omitempty"`
-	IconSize       int     `json:"iconSize,omitempty"`
-	Volume         float64 `json:"volume,omitempty"`
+	Type           string        `json:"type,omitempty"`
+	Identifier     string        `json:"identifier,omitempty"`
+	LongIdentifier string        `json:"longIdentifier,omitempty"`
+	ScaleFactor    int           `json:"scaleFactor,omitempty"`
+	IconSize       int           `json:"iconSize,omitempty"`
+	Volume         float64       `json:"volume,omitempty"`
+	RequestedData  RequestedData `json:"requestedData,omitempty"`
+}
+
+type RequestedData struct {
+	Album                    interface{} `json:"album"`
+	RemoteControlAvailable   bool        `json:"remoteControlAvailable"`
+	MachineIconAndScreenshot interface{} `json:"machineIconAndScreenshot"`
+	Bundleid                 interface{} `json:"bundleid"`
+	AlbumArt                 interface{} `json:"albumArt"`
+	SourceName               interface{} `json:"sourceName"`
+	Title                    interface{} `json:"title"`
+	Icon                     interface{} `json:"icon"`
+	TrackMetadataAvailable   interface{} `json:"trackMetadataAvailable"`
+	Artist                   interface{} `json:"artist"`
+	MachineModel             interface{} `json:"machineModel"`
+	MachineName              interface{} `json:"machineName"`
 }

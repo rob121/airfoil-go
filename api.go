@@ -28,15 +28,17 @@ var maxbuffer = 16384
 var Airfoils []string
 
 type AirfoilConn struct {
-	Status      int
-	Address     string
-	Conn        net.Conn
-	Cb          func(AirfoilResponse, error)
-	Speakers    map[string]Speaker
-	Sources     map[string]Source
-	SpeakerLock sync.RWMutex
-	SourceLock  sync.RWMutex
-	Errors      []error
+	Status           int
+	Address          string
+	Conn             net.Conn
+	Cb               func(AirfoilResponse, error)
+	Speakers         map[string]Speaker
+	Sources          map[string]Source
+	ActiveSourceKey  string
+	ActiveSourceName string
+	SpeakerLock      sync.RWMutex
+	SourceLock       sync.RWMutex
+	Errors           []error
 }
 
 func NewConn(addr string) *AirfoilConn {
@@ -323,6 +325,18 @@ func (a *AirfoilConn) intercept(response AirfoilResponse, err error) {
 
 	}
 
+	if response.ReplyID == "13" {
+		sn := response.Data.Metadata.SourceName.(string)
+		a.SetActiveSource(a.GetSourceByName(sn))
+	}
+	//we receive no data other than an alert so we'll fetch the metadata here
+	if response.Request == "sourceMetadataChanged" {
+
+		//this will trigger a second request for details
+		a.FetchMetadata()
+
+	}
+
 	if response.Request == "speakerConnectedChanged" {
 
 		spk, err := a.GetSpeaker(response.Data.LongIdentifier)
@@ -431,6 +445,20 @@ func (a *AirfoilConn) Connect(id string) error {
 
 }
 
+func (a *AirfoilConn) GetSourceByName(friendly_name string) Source {
+
+	var ret Source
+
+	a.SourceLock.RLock()
+	defer a.SourceLock.RUnlock()
+	for _, sc := range a.Sources {
+		if friendly_name == sc.FriendlyName {
+			return sc
+		}
+	}
+	return ret
+}
+
 func (a *AirfoilConn) Volume(id string, vol float64) error {
 
 	req := AirfoilRequest{Request: "setSpeakerVolume", RequestID: "10", Data: DataRequest{LongIdentifier: id, Volume: vol}}
@@ -492,9 +520,32 @@ func (a *AirfoilConn) GetSource(id string) (*Source, error) {
 
 }
 
+func (a *AirfoilConn) SetActiveSource(src Source) {
+
+	a.ActiveSourceName = src.FriendlyName
+	a.ActiveSourceKey = src.Identifier
+
+}
+
 func (a *AirfoilConn) FetchSources() error {
 
 	req := AirfoilRequest{Request: "getSourceList", RequestID: "9", Data: DataRequest{IconSize: 16, ScaleFactor: 1}}
+
+	outb, err := json.Marshal(req)
+
+	if err != nil {
+
+		return err
+
+	}
+
+	return a.Send(string(outb))
+
+}
+
+func (a *AirfoilConn) FetchMetadata() error {
+
+	req := AirfoilRequest{Request: "getSourceMetadata", RequestID: "13", Data: DataRequest{ScaleFactor: 2, RequestedData: RequestedData{Album: true, RemoteControlAvailable: true, MachineIconAndScreenshot: 64, Bundleid: true, AlbumArt: 64, SourceName: true, Title: true, Icon: 16, TrackMetadataAvailable: true, Artist: true, MachineModel: true, MachineName: true}}}
 
 	outb, err := json.Marshal(req)
 
